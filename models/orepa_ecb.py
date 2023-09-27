@@ -22,7 +22,6 @@ class OREPA_1x1_3x3(nn.Module):
         return out
 
 
-
 class OREPA_ECB(nn.Module):
     def __init__(self, in_planes, out_planes, depth_multiplier, act_type='prelu'):
         super(OREPA_ECB, self).__init__()
@@ -32,6 +31,7 @@ class OREPA_ECB(nn.Module):
         self.out_planes = out_planes
         self.act_type = act_type
         self.kernel_size = 3
+        self.mid_channels = int(self.out_planes * depth_multiplier)
 
         with_idt = False
 
@@ -77,13 +77,23 @@ class OREPA_ECB(nn.Module):
         return y
 
     def rep_params(self):
+        device = self.conv1x1_lpl.k0.get_device()
+        if device < 0:
+            device = None
         K0, B0 = self.conv3x3.orepa_reparam.weight, self.conv3x3.orepa_reparam.bias
-        K1_1, B1_1 = self.conv1x1_3x3.conv1.or1x1_reparam.weight, self.conv1x1_3x3.conv1.or1x1_reparam.bias
-        K1_3, B1_3 = self.conv1x1_3x3.conv2.orepa_reparam.weight, self.conv1x1_3x3.conv2.orepa_reparam.bias
+        # K1_1, B1_1 = self.conv1x1_3x3.conv1.or1x1_reparam.weight, self.conv1x1_3x3.conv1.or1x1_reparam.bias
+        # K1_3, B1_3 = self.conv1x1_3x3.conv2.orepa_reparam.weight, self.conv1x1_3x3.conv2.orepa_reparam.bias
+        # reparam conv1x1_3x3
+        k1_1, b1_1 = self.conv1x1_3x3.conv1.or1x1_reparam.weight, self.conv1x1_3x3.conv1.or1x1_reparam.bias
+        k1_3, b1_3 = self.conv1x1_3x3.conv2.orepa_reparam.weight, self.conv1x1_3x3.conv2.orepa_reparam.bias
+        K1 = F.conv2d(input=k1_3, weight=k1_1.permute(1, 0, 2, 3))
+        B1 = torch.ones(1, self.mid_channels, 3, 3, device=device) * b1_1.view(1, -1, 1, 1)
+        B1 = F.conv2d(input=B1, weight=k1_3).view(-1,) + b1_3
+
         K2, B2 = self.conv1x1_sbx.rep_params()
         K3, B3 = self.conv1x1_sby.rep_params()
         K4, B4 = self.conv1x1_lpl.rep_params()
-        RK, RB = (K0 + K1_1 + K1_3 + K2 + K3 + K4), (B0 + B1_1 + B1_3 + B2 + B3 + B4)
+        RK, RB = (K0 + K1+ K2 + K3 + K4), (B0 + B1 + B2 + B3 + B4)
 
         if self.with_idt:
             device = RK.get_device()
@@ -95,8 +105,3 @@ class OREPA_ECB(nn.Module):
             B_idt = 0.0
             RK, RB = RK + K_idt, RB + B_idt
         return RK, RB
-
-# if __name__ == '__main__':
-#     conv = OREPA_1x1_3x3('conv1x1_3x3', in_planes=3, out_planes=8, kernel_size=3, depth_multiplier=2)
-#     print(type(conv.conv2))
-#     print(type(conv.conv1))
