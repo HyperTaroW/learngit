@@ -15,11 +15,12 @@ import sys
 import time
 
 
-parser = argparse.ArgumentParser(description='ECBSR')
+parser = argparse.ArgumentParser(description='OREPA_ECBSR')
 
 ## yaml configuration files
 parser.add_argument('--config', type=str, default=None, help = 'pre-config file for training')
-
+parser.add_argument('--arch', metavar='ARCH', default='ECBSR')
+parser.add_argument('-t', '--blocktype', metavar='BLK', default='OREPA')
 ## paramters for ecbsr
 parser.add_argument('--scale', type=int, default=2, help = 'scale for sr network')
 parser.add_argument('--colors', type=int, default=1, help = '1(Y channls of YCbCr)')
@@ -52,7 +53,7 @@ parser.add_argument('--set5_hr_path', type=str, default='/data/sr_datasets/bench
 parser.add_argument('--set5_lr_path', type=str, default='/data/sr_datasets/benchmark/Set5/LR_bicubic', help = '')
 parser.add_argument('--set14_hr_path', type=str, default='/data/sr_datasets/benchmark/Set14/HR', help = '')
 parser.add_argument('--set14_lr_path', type=str, default='/data/sr_datasets/benchmark/Set14/LR_bicubic', help = '')
-parser.add_argument('--b100_hr_path', type=str, default='/data/sr_datasets/benchmark/B00/HR', help = '')
+parser.add_argument('--b100_hr_path', type=str, default='/data/sr_datasets/benchmark/B100/HR', help = '')
 parser.add_argument('--b100_lr_path', type=str, default='/data/sr_datasets/benchmark/B100/LR_bicubic', help = '')
 parser.add_argument('--u100_hr_path', type=str, default='/data/sr_datasets/benchmark/Urban100/HR', help = '')
 parser.add_argument('--u100_lr_path', type=str, default='/data/sr_datasets/benchmark/Urban100/LR_bicubic', help = '')
@@ -102,7 +103,12 @@ if __name__ == '__main__':
     valid_dataloaders += [{'name': 'u100', 'dataloader': DataLoader(dataset=u100, batch_size=1, shuffle=False)}]
 
     ## definitions of model, loss, and optimizer
-    model = ECBSR(module_nums=args.m_ecbsr, channel_nums=args.c_ecbsr, with_idt=args.idt_ecbsr, act_type=args.act_type, scale=args.scale, colors=args.colors).to(device)
+    # model = ECBSR(module_nums=args.m_ecbsr, channel_nums=args.c_ecbsr, with_idt=args.idt_ecbsr, act_type=args.act_type, scale=args.scale, colors=args.colors).to(device)
+    from models.convnet_utils import switch_deploy_flag, switch_conv_bn_impl, build_model
+    switch_conv_bn_impl(args.blocktype)
+    switch_deploy_flag(False)
+    orepa_ecbsr = build_model(args.arch)
+    model = orepa_ecbsr(module_nums=args.m_ecbsr, channels_nums=args.c_ecbsr, act_type=args.act_type, scale=args.scale, colors=args.colors).to(device)
     loss_func = nn.L1Loss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     if args.pretrain is not None:
@@ -113,7 +119,7 @@ if __name__ == '__main__':
 
     ## auto-generate the output logname
     timestamp = utils.cur_timestamp_str()
-    experiment_name = "ecbsr-x{}-m{}c{}-{}-{}".format(args.scale, args.m_ecbsr, args.c_ecbsr, args.act_type, timestamp)
+    experiment_name = "orepa_ecbsr-x{}-m{}c{}-{}-{}".format(args.scale, args.m_ecbsr, args.c_ecbsr, args.act_type, timestamp)
     experiment_path = os.path.join(args.log_path, experiment_name)
     if not os.path.exists(experiment_path):
         os.makedirs(experiment_path)
