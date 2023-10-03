@@ -20,7 +20,7 @@ lr: 0.0005
 store_in_ram: 1
 
 ## hardware specification
-gpu_id: 3
+gpu_id: 2
 threads: 4
 
 ## data specification
