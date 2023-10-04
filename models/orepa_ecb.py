@@ -121,7 +121,7 @@ class SeqConv(nn.Module):
         for i in range(self.out_channels):
             k1[i, i, :, :] = tmp[i, 0, :, :]
         b1 = self.bias
-        k0, b0 = self.conv0.or1x1_reparam.weight, self.conv0.or1x1_reparam.bias
+        k0, b0 = self.conv0.switch_to_deploy()
         RK = F.conv2d(input=k1, weight=k0.permute(1, 0, 2, 3))
         RB = torch.ones(1, self.out_channels, 3, 3, device=device) * b0.view(1, -1, 1, 1)
         RB = F.conv2d(input=RB, weight=k1).view(-1,) + b1
@@ -183,22 +183,25 @@ class OREPA_ECB(nn.Module):
         return y
 
     def rep_params(self):
-        device = self.conv1x1_lpl.k0.get_device()
-        if device < 0:
-            device = None
-        K0, B0 = self.conv3x3.orepa_reparam.weight, self.conv3x3.orepa_reparam.bias
-        # K1_1, B1_1 = self.conv1x1_3x3.conv1.or1x1_reparam.weight, self.conv1x1_3x3.conv1.or1x1_reparam.bias
-        # K1_3, B1_3 = self.conv1x1_3x3.conv2.orepa_reparam.weight, self.conv1x1_3x3.conv2.orepa_reparam.bias
-        # reparam conv1x1_3x3
-        k1_1, b1_1 = self.conv1x1_3x3.conv1.or1x1_reparam.weight, self.conv1x1_3x3.conv1.or1x1_reparam.bias
-        k1_3, b1_3 = self.conv1x1_3x3.conv2.orepa_reparam.weight, self.conv1x1_3x3.conv2.orepa_reparam.bias
-        K1 = F.conv2d(input=k1_3, weight=k1_1.permute(1, 0, 2, 3))
-        B1 = torch.ones(1, self.mid_channels, 3, 3, device=device) * b1_1.view(1, -1, 1, 1)
-        B1 = F.conv2d(input=B1, weight=k1_3).view(-1,) + b1_3
 
         K2, B2 = self.conv1x1_sbx.rep_params()
         K3, B3 = self.conv1x1_sby.rep_params()
         K4, B4 = self.conv1x1_lpl.rep_params()
+
+        device = K3.get_device()
+        if device < 0:
+            device = None
+        K0, B0 = self.conv3x3.switch_to_deploy()
+        # K1_1, B1_1 = self.conv1x1_3x3.conv1.or1x1_reparam.weight, self.conv1x1_3x3.conv1.or1x1_reparam.bias
+        # K1_3, B1_3 = self.conv1x1_3x3.conv2.orepa_reparam.weight, self.conv1x1_3x3.conv2.orepa_reparam.bias
+        # reparam conv1x1_3x3
+        k1_1, b1_1 = self.conv1x1_3x3.conv1.switch_to_deploy()
+        k1_3, b1_3 = self.conv1x1_3x3.conv2.switch_to_deploy()
+        K1 = F.conv2d(input=k1_3, weight=k1_1.permute(1, 0, 2, 3))
+        B1 = torch.ones(1, self.mid_channels, 3, 3, device=device) * b1_1.view(1, -1, 1, 1)
+        B1 = F.conv2d(input=B1, weight=k1_3).view(-1,) + b1_3
+
+
         RK, RB = (K0 + K1+ K2 + K3 + K4), (B0 + B1 + B2 + B3 + B4)
 
         if self.with_idt:

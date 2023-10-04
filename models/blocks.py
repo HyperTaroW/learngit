@@ -160,38 +160,33 @@ class OREPA_1x1(nn.Module):
         self.padding = padding
         self.dilation = dilation
 
-        if deploy:
-            self.or1x1_reparam = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, stride=stride,
-                                      padding=padding, dilation=dilation, groups=groups, bias=True)
+        self.branch_counter = 0
 
-        else: 
-            self.branch_counter = 0
+        self.weight_or1x1_origin = nn.Parameter(torch.Tensor(out_channels, in_channels, 1, 1))
+        init.kaiming_uniform_(self.weight_or1x1_origin, a=math.sqrt(1.0))
+        self.branch_counter += 1
 
-            self.weight_or1x1_origin = nn.Parameter(torch.Tensor(out_channels, in_channels, 1, 1))
-            init.kaiming_uniform_(self.weight_or1x1_origin, a=math.sqrt(1.0))
-            self.branch_counter += 1
-    
-            if out_channels > in_channels:
-                self.weight_or1x1_l2i_conv1 = nn.Parameter(torch.eye(in_channels).unsqueeze(2).unsqueeze(3))
-                self.weight_or1x1_l2i_conv2 = nn.Parameter(torch.Tensor(out_channels, in_channels, 1, 1))
-                init.kaiming_uniform_(self.weight_or1x1_l2i_conv2, a=math.sqrt(1.0))
-            else:
-                self.weight_or1x1_l2i_conv1 = nn.Parameter(torch.Tensor(out_channels, in_channels, 1, 1))
-                init.kaiming_uniform_(self.weight_or1x1_l2i_conv1, a=math.sqrt(1.0))
-                self.weight_or1x1_l2i_conv2 = nn.Parameter(torch.eye(out_channels).unsqueeze(2).unsqueeze(3))
-            self.branch_counter += 1
+        if out_channels > in_channels:
+            self.weight_or1x1_l2i_conv1 = nn.Parameter(torch.eye(in_channels).unsqueeze(2).unsqueeze(3))
+            self.weight_or1x1_l2i_conv2 = nn.Parameter(torch.Tensor(out_channels, in_channels, 1, 1))
+            init.kaiming_uniform_(self.weight_or1x1_l2i_conv2, a=math.sqrt(1.0))
+        else:
+            self.weight_or1x1_l2i_conv1 = nn.Parameter(torch.Tensor(out_channels, in_channels, 1, 1))
+            init.kaiming_uniform_(self.weight_or1x1_l2i_conv1, a=math.sqrt(1.0))
+            self.weight_or1x1_l2i_conv2 = nn.Parameter(torch.eye(out_channels).unsqueeze(2).unsqueeze(3))
+        self.branch_counter += 1
 
 
-            self.vector = nn.Parameter(torch.Tensor(self.branch_counter, self.out_channels))
-            # 这里的 vector 是否相当于 scaling 操作.
-            self.bn = nn.BatchNorm2d(self.out_channels)
+        self.vector = nn.Parameter(torch.Tensor(self.branch_counter, self.out_channels))
+        # 这里的 vector 是否相当于 scaling 操作.
+        self.bn = nn.BatchNorm2d(self.out_channels)
 
-            init.constant_(self.vector[0, :], 1.0)
-            init.constant_(self.vector[1, :], 0.5)      
+        init.constant_(self.vector[0, :], 1.0)
+        init.constant_(self.vector[1, :], 0.5)
 
-            if single_init:
-                #   Initialize the vector.weight of origin as 1 and others as 0. This is not the default setting.
-                self.single_init()  
+        if single_init:
+            #   Initialize the vector.weight of origin as 1 and others as 0. This is not the default setting.
+            self.single_init()
 
     def weight_gen(self):
 
@@ -204,8 +199,8 @@ class OREPA_1x1(nn.Module):
     # 这里是否是 scaling 的尺度
 
     def forward(self, inputs):
-        if hasattr(self, 'or1x1_reparam'):
-            return self.nonlinear(self.or1x1_reparam(inputs))
+        # if hasattr(self, 'or1x1_reparam'):
+        #     return self.nonlinear(self.or1x1_reparam(inputs))
 
         weight = self.weight_gen()
         out = F.conv2d(inputs, weight, bias=None, stride=self.stride, padding=self.padding, dilation=self.dilation, groups=self.groups)
@@ -215,8 +210,8 @@ class OREPA_1x1(nn.Module):
         return transI_fusebn(self.weight_gen(), self.bn)
 
     def switch_to_deploy(self):
-        if hasattr(self, 'or1x1_reparam'):
-            return
+        # if hasattr(self, 'or1x1_reparam'):
+        #     return
         kernel, bias = self.get_equivalent_kernel_bias()
         self.or1x1_reparam = nn.Conv2d(in_channels=self.in_channels, out_channels=self.out_channels,
                                      kernel_size=self.kernel_size, stride=self.stride,
@@ -225,11 +220,8 @@ class OREPA_1x1(nn.Module):
         self.or1x1_reparam.bias.data = bias
         for para in self.parameters():
             para.detach_()
-        self.__delattr__('weight_or1x1_origin')
-        self.__delattr__('weight_or1x1_l2i_conv1')
-        self.__delattr__('weight_or1x1_l2i_conv2')
-        self.__delattr__('vector')
-        self.__delattr__('bn')
+
+        return kernel, bias
 
     def init_gamma(self, gamma_value):
         init.constant_(self.vector, gamma_value)
@@ -273,110 +265,108 @@ class OREPA(nn.Module):
         self.padding = padding
         self.dilation = dilation
 
-        if deploy:
-            self.orepa_reparam = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, stride=stride,
-                                      padding=padding, dilation=dilation, groups=groups, bias=True)
+        # if deploy:
+        #     self.orepa_reparam = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, stride=stride,
+        #                               padding=padding, dilation=dilation, groups=groups, bias=True)
+
+        self.branch_counter = 0
+
+        self.weight_orepa_origin = nn.Parameter(
+            torch.Tensor(out_channels, int(in_channels / self.groups),
+                        kernel_size, kernel_size))
+        init.kaiming_uniform_(self.weight_orepa_origin, a=math.sqrt(0.0))
+        self.branch_counter += 1
+
+        self.weight_orepa_avg_conv = nn.Parameter(
+            torch.Tensor(out_channels, int(in_channels / self.groups), 1,
+                        1))
+        self.weight_orepa_pfir_conv = nn.Parameter(
+            torch.Tensor(out_channels, int(in_channels / self.groups), 1,
+                        1))
+        init.kaiming_uniform_(self.weight_orepa_avg_conv, a=0.0)
+        init.kaiming_uniform_(self.weight_orepa_pfir_conv, a=0.0)
+        self.register_buffer(
+            'weight_orepa_avg_avg',
+            torch.ones(kernel_size,
+                    kernel_size).mul(1.0 / kernel_size / kernel_size))
+        self.branch_counter += 1
+        self.branch_counter += 1
+
+        self.weight_orepa_1x1 = nn.Parameter(
+            torch.Tensor(out_channels, int(in_channels / self.groups), 1,
+                        1))
+        init.kaiming_uniform_(self.weight_orepa_1x1, a=0.0)
+        self.branch_counter += 1
+
+        if internal_channels_1x1_3x3 is None:
+            internal_channels_1x1_3x3 = in_channels if groups <= 4 else 2 * in_channels
+
+        if internal_channels_1x1_3x3 == in_channels:
+            self.weight_orepa_1x1_kxk_idconv1 = nn.Parameter(
+                torch.zeros(in_channels, int(in_channels / self.groups), 1, 1))
+            id_value = np.zeros(
+                (in_channels, int(in_channels / self.groups), 1, 1))
+            for i in range(in_channels):
+                id_value[i, i % int(in_channels / self.groups), 0, 0] = 1
+            id_tensor = torch.from_numpy(id_value).type_as(
+                self.weight_orepa_1x1_kxk_idconv1)
+            self.register_buffer('id_tensor', id_tensor)
 
         else:
+            self.weight_orepa_1x1_kxk_idconv1 = nn.Parameter(
+                torch.zeros(internal_channels_1x1_3x3,
+                            int(in_channels / self.groups), 1, 1))
+            id_value = np.zeros(
+                (internal_channels_1x1_3x3, int(in_channels / self.groups), 1, 1))
+            for i in range(internal_channels_1x1_3x3):
+                id_value[i, i % int(in_channels / self.groups), 0, 0] = 1
+            id_tensor = torch.from_numpy(id_value).type_as(
+                self.weight_orepa_1x1_kxk_idconv1)
+            self.register_buffer('id_tensor', id_tensor)
+            #init.kaiming_uniform_(
+                #self.weight_orepa_1x1_kxk_conv1, a=math.sqrt(0.0))
+        self.weight_orepa_1x1_kxk_conv2 = nn.Parameter(
+            torch.Tensor(out_channels,
+                        int(internal_channels_1x1_3x3 / self.groups),
+                        kernel_size, kernel_size))
+        init.kaiming_uniform_(self.weight_orepa_1x1_kxk_conv2, a=math.sqrt(0.0))
+        self.branch_counter += 1
 
-            self.branch_counter = 0
+        expand_ratio = 8
+        self.weight_orepa_gconv_dw = nn.Parameter(
+            torch.Tensor(in_channels * expand_ratio, 1, kernel_size,
+                        kernel_size))
+        self.weight_orepa_gconv_pw = nn.Parameter(
+            torch.Tensor(out_channels, int(in_channels * expand_ratio / self.groups), 1, 1))
+        init.kaiming_uniform_(self.weight_orepa_gconv_dw, a=math.sqrt(0.0))
+        init.kaiming_uniform_(self.weight_orepa_gconv_pw, a=math.sqrt(0.0))
+        self.branch_counter += 1
 
-            self.weight_orepa_origin = nn.Parameter(
-                torch.Tensor(out_channels, int(in_channels / self.groups),
-                            kernel_size, kernel_size))
-            init.kaiming_uniform_(self.weight_orepa_origin, a=math.sqrt(0.0))
-            self.branch_counter += 1
+        self.vector = nn.Parameter(torch.Tensor(self.branch_counter, self.out_channels))
+        if weight_only is False:
+            self.bn = nn.BatchNorm2d(self.out_channels)
 
-            self.weight_orepa_avg_conv = nn.Parameter(
-                torch.Tensor(out_channels, int(in_channels / self.groups), 1,
-                            1))
-            self.weight_orepa_pfir_conv = nn.Parameter(
-                torch.Tensor(out_channels, int(in_channels / self.groups), 1,
-                            1))
-            init.kaiming_uniform_(self.weight_orepa_avg_conv, a=0.0)
-            init.kaiming_uniform_(self.weight_orepa_pfir_conv, a=0.0)
-            self.register_buffer(
-                'weight_orepa_avg_avg',
-                torch.ones(kernel_size,
-                        kernel_size).mul(1.0 / kernel_size / kernel_size))
-            self.branch_counter += 1
-            self.branch_counter += 1
+        self.fre_init()
 
-            self.weight_orepa_1x1 = nn.Parameter(
-                torch.Tensor(out_channels, int(in_channels / self.groups), 1,
-                            1))
-            init.kaiming_uniform_(self.weight_orepa_1x1, a=0.0)
-            self.branch_counter += 1
+        init.constant_(self.vector[0, :], 0.25 * math.sqrt(init_hyper_gamma))  #origin
+        init.constant_(self.vector[1, :], 0.25 * math.sqrt(init_hyper_gamma))  #avg
+        init.constant_(self.vector[2, :], 0.0 * math.sqrt(init_hyper_gamma))  #prior
+        init.constant_(self.vector[3, :], 0.5 * math.sqrt(init_hyper_gamma))  #1x1_kxk
+        init.constant_(self.vector[4, :], 1.0 * math.sqrt(init_hyper_gamma))  #1x1
+        init.constant_(self.vector[5, :], 0.5 * math.sqrt(init_hyper_gamma))  #dws_conv
 
-            if internal_channels_1x1_3x3 is None:
-                internal_channels_1x1_3x3 = in_channels if groups <= 4 else 2 * in_channels
+        self.weight_orepa_1x1.data = self.weight_orepa_1x1.mul(init_hyper_para)
+        self.weight_orepa_origin.data = self.weight_orepa_origin.mul(init_hyper_para)
+        self.weight_orepa_1x1_kxk_conv2.data = self.weight_orepa_1x1_kxk_conv2.mul(init_hyper_para)
+        self.weight_orepa_avg_conv.data = self.weight_orepa_avg_conv.mul(init_hyper_para)
+        self.weight_orepa_pfir_conv.data = self.weight_orepa_pfir_conv.mul(init_hyper_para)
 
-            if internal_channels_1x1_3x3 == in_channels:
-                self.weight_orepa_1x1_kxk_idconv1 = nn.Parameter(
-                    torch.zeros(in_channels, int(in_channels / self.groups), 1, 1))
-                id_value = np.zeros(
-                    (in_channels, int(in_channels / self.groups), 1, 1))
-                for i in range(in_channels):
-                    id_value[i, i % int(in_channels / self.groups), 0, 0] = 1
-                id_tensor = torch.from_numpy(id_value).type_as(
-                    self.weight_orepa_1x1_kxk_idconv1)
-                self.register_buffer('id_tensor', id_tensor)
+        self.weight_orepa_gconv_dw.data = self.weight_orepa_gconv_dw.mul(math.sqrt(init_hyper_para))
+        self.weight_orepa_gconv_pw.data = self.weight_orepa_gconv_pw.mul(math.sqrt(init_hyper_para))
 
-            else:
-                self.weight_orepa_1x1_kxk_idconv1 = nn.Parameter(
-                    torch.zeros(internal_channels_1x1_3x3,
-                                int(in_channels / self.groups), 1, 1))
-                id_value = np.zeros(
-                    (internal_channels_1x1_3x3, int(in_channels / self.groups), 1, 1))
-                for i in range(internal_channels_1x1_3x3):
-                    id_value[i, i % int(in_channels / self.groups), 0, 0] = 1
-                id_tensor = torch.from_numpy(id_value).type_as(
-                    self.weight_orepa_1x1_kxk_idconv1)
-                self.register_buffer('id_tensor', id_tensor)
-                #init.kaiming_uniform_(
-                    #self.weight_orepa_1x1_kxk_conv1, a=math.sqrt(0.0))
-            self.weight_orepa_1x1_kxk_conv2 = nn.Parameter(
-                torch.Tensor(out_channels,
-                            int(internal_channels_1x1_3x3 / self.groups),
-                            kernel_size, kernel_size))
-            init.kaiming_uniform_(self.weight_orepa_1x1_kxk_conv2, a=math.sqrt(0.0))
-            self.branch_counter += 1
-
-            expand_ratio = 8
-            self.weight_orepa_gconv_dw = nn.Parameter(
-                torch.Tensor(in_channels * expand_ratio, 1, kernel_size,
-                            kernel_size))
-            self.weight_orepa_gconv_pw = nn.Parameter(
-                torch.Tensor(out_channels, int(in_channels * expand_ratio / self.groups), 1, 1))
-            init.kaiming_uniform_(self.weight_orepa_gconv_dw, a=math.sqrt(0.0))
-            init.kaiming_uniform_(self.weight_orepa_gconv_pw, a=math.sqrt(0.0))
-            self.branch_counter += 1
-
-            self.vector = nn.Parameter(torch.Tensor(self.branch_counter, self.out_channels))
-            if weight_only is False:
-                self.bn = nn.BatchNorm2d(self.out_channels)
-
-            self.fre_init()
-
-            init.constant_(self.vector[0, :], 0.25 * math.sqrt(init_hyper_gamma))  #origin
-            init.constant_(self.vector[1, :], 0.25 * math.sqrt(init_hyper_gamma))  #avg
-            init.constant_(self.vector[2, :], 0.0 * math.sqrt(init_hyper_gamma))  #prior
-            init.constant_(self.vector[3, :], 0.5 * math.sqrt(init_hyper_gamma))  #1x1_kxk
-            init.constant_(self.vector[4, :], 1.0 * math.sqrt(init_hyper_gamma))  #1x1
-            init.constant_(self.vector[5, :], 0.5 * math.sqrt(init_hyper_gamma))  #dws_conv
-
-            self.weight_orepa_1x1.data = self.weight_orepa_1x1.mul(init_hyper_para)
-            self.weight_orepa_origin.data = self.weight_orepa_origin.mul(init_hyper_para)
-            self.weight_orepa_1x1_kxk_conv2.data = self.weight_orepa_1x1_kxk_conv2.mul(init_hyper_para)
-            self.weight_orepa_avg_conv.data = self.weight_orepa_avg_conv.mul(init_hyper_para)
-            self.weight_orepa_pfir_conv.data = self.weight_orepa_pfir_conv.mul(init_hyper_para)
-
-            self.weight_orepa_gconv_dw.data = self.weight_orepa_gconv_dw.mul(math.sqrt(init_hyper_para))
-            self.weight_orepa_gconv_pw.data = self.weight_orepa_gconv_pw.mul(math.sqrt(init_hyper_para))
-
-            if single_init:
-                #   Initialize the vector.weight of origin as 1 and others as 0. This is not the default setting.
-                self.single_init()  
+        if single_init:
+            #   Initialize the vector.weight of origin as 1 and others as 0. This is not the default setting.
+            self.single_init()
 
     def fre_init(self):
         prior_tensor = torch.Tensor(self.out_channels, self.kernel_size,
@@ -471,9 +461,6 @@ class OREPA(nn.Module):
         return weight_dsc.reshape(o, int(i/groups_conv), h, w)
 
     def forward(self, inputs=None):
-        if hasattr(self, 'orepa_reparam'):
-            return self.nonlinear(self.orepa_reparam(inputs))
-
 
         weight = self.weight_gen()
 
@@ -494,35 +481,36 @@ class OREPA(nn.Module):
         return transI_fusebn(self.weight_gen(), self.bn)
 
     def switch_to_deploy(self):
-        if hasattr(self, 'or1x1_reparam'):
-            return
+        # if hasattr(self, 'or1x1_reparam'):
+        #     return
         kernel, bias = self.get_equivalent_kernel_bias()
         self.orepa_reparam = nn.Conv2d(in_channels=self.in_channels, out_channels=self.out_channels,
                                      kernel_size=self.kernel_size, stride=self.stride,
                                      padding=self.padding, dilation=self.dilation, groups=self.groups, bias=True)
         self.orepa_reparam.weight.data = kernel
         self.orepa_reparam.bias.data = bias
-        for para in self.parameters():
-            para.detach_()
-        self.__delattr__('weight_orepa_origin')
-        self.__delattr__('weight_orepa_1x1')
-        self.__delattr__('weight_orepa_1x1_kxk_conv2')
-        if hasattr(self, 'weight_orepa_1x1_kxk_idconv1'):
-            self.__delattr__('id_tensor')
-            self.__delattr__('weight_orepa_1x1_kxk_idconv1')
-        elif hasattr(self, 'weight_orepa_1x1_kxk_conv1'):
-            self.__delattr__('weight_orepa_1x1_kxk_conv1')
-        else:
-            raise NotImplementedError
-        self.__delattr__('weight_orepa_avg_avg')  
-        self.__delattr__('weight_orepa_avg_conv')
-        self.__delattr__('weight_orepa_pfir_conv')
-        self.__delattr__('weight_orepa_prior')
-        self.__delattr__('weight_orepa_gconv_dw')
-        self.__delattr__('weight_orepa_gconv_pw')
-
-        self.__delattr__('bn')
-        self.__delattr__('vector')
+        # for para in self.parameters():
+        #     para.detach_()
+        # self.__delattr__('weight_orepa_origin')
+        # self.__delattr__('weight_orepa_1x1')
+        # self.__delattr__('weight_orepa_1x1_kxk_conv2')
+        # if hasattr(self, 'weight_orepa_1x1_kxk_idconv1'):
+        #     self.__delattr__('id_tensor')
+        #     self.__delattr__('weight_orepa_1x1_kxk_idconv1')
+        # elif hasattr(self, 'weight_orepa_1x1_kxk_conv1'):
+        #     self.__delattr__('weight_orepa_1x1_kxk_conv1')
+        # else:
+        #     raise NotImplementedError
+        # self.__delattr__('weight_orepa_avg_avg')
+        # self.__delattr__('weight_orepa_avg_conv')
+        # self.__delattr__('weight_orepa_pfir_conv')
+        # self.__delattr__('weight_orepa_prior')
+        # self.__delattr__('weight_orepa_gconv_dw')
+        # self.__delattr__('weight_orepa_gconv_pw')
+        #
+        # self.__delattr__('bn')
+        # self.__delattr__('vector')
+        return kernel, bias
 
     def init_gamma(self, gamma_value):
         init.constant_(self.vector, gamma_value)
