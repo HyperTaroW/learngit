@@ -42,9 +42,9 @@ class OREPA_ECB(nn.Module):
         #   这里注意检测 orepa 当中的卷积是否进行了padding
         self.conv3x3 = conv_bn(self.in_planes, self.out_planes, kernel_size=3, padding=1)
         self.conv1x1_3x3 = OREPA_1x1_3x3('conv1x1_3x3', self.in_planes, self.out_planes, self.kernel_size, self.depth_multiplier)
-        self.conv1x1_sbx = SeqConv3x3('conv1x1-sobelx', self.in_planes, self.out_planes,)
-        self.conv1x1_sby = SeqConv3x3('conv1x1-sobely', self.in_planes, self.out_planes,)
-        self.conv1x1_lpl = SeqConv3x3('conv1x1-laplacian', self.in_planes, self.out_planes,)
+        self.conv1x1_sbx = SeqConv3x3('conv1x1-sobelx', self.in_planes, self.out_planes, -1)
+        self.conv1x1_sby = SeqConv3x3('conv1x1-sobely', self.in_planes, self.out_planes, -1)
+        self.conv1x1_lpl = SeqConv3x3('conv1x1-laplacian', self.in_planes, self.out_planes, -1)
 
         if self.act_type == 'prelu':
             self.act = nn.PReLU(num_parameters=self.out_planes)
