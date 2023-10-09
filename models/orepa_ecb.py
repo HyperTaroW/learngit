@@ -92,9 +92,10 @@ class SeqConv(nn.Module):
     def forward(self, x):
         y0 = self.conv0(x)
         device = y0.get_device()
+        _, b0 = self.conv0.get_equivalent_kernel_bias()
         y0 = F.pad(y0, (1, 1, 1, 1), 'constant', 0)
         # pad with zero vector
-        b0_pad = self.b0.view(1, -1, 1, 1).to(device)
+        b0_pad = b0.view(1, -1, 1, 1).to(device)
         y0[:, :, 0:1, :] = b0_pad
         y0[:, :, -1:, :] = b0_pad
         y0[:, :, :, 0:1] = b0_pad
@@ -104,8 +105,7 @@ class SeqConv(nn.Module):
         return y1
 
     def rep_params(self):
-        self.k0, self.b0 = self.conv0.get_equivalent_kernel_bias()
-        device = self.k0.get_device()
+        device = self.scale.get_device()
         if device < 0:
             device = None
 
@@ -114,8 +114,9 @@ class SeqConv(nn.Module):
         for i in range(self.out_channels):
             k1[i, i, :, :] = tmp[i, 0, :, :]
         b1 = self.bias
-        RK = F.conv2d(input=k1, weight=self.k0.permute(1, 0, 2, 3))
-        RB = torch.ones(1, self.out_channels, 3, 3, device=device) * self.b0.view(1, -1, 1, 1)
+        k0, b0 = self.conv0.switch_to_deploy()
+        RK = F.conv2d(input=k1, weight=k0.permute(1, 0, 2, 3))
+        RB = torch.ones(1, self.out_channels, 3, 3, device=device) * b0.view(1, -1, 1, 1)
         RB = F.conv2d(input=RB, weight=k1).view(-1,) + b1
         return RK, RB
 
