@@ -30,10 +30,7 @@ class SeqConv(nn.Module):
         self.out_channels = out_planes
 
         if self.type == 'conv1x1-sobelx':
-            conv0 = conv_bn(self.in_channels, self.out_channels, kernel_size=1, padding=0)
-            self.k0, self.b0 = conv0.weight_gen(), None
-            self.nonlinear, self.bn =  conv0.nonlinear, conv0.bn
-            self.rep_k0, self.rep_b0 = conv0.get_equivalent_kernel_bias()
+            self.conv0 = conv_bn(self.in_channels, self.out_channels, kernel_size=1, padding=0)
 
             scale = torch.randn(size=(self.out_channels, 1, 1, 1)) * 1e-3
             self.scale = nn.Parameter(scale)
@@ -52,10 +49,7 @@ class SeqConv(nn.Module):
                 self.mask[i, 0, 2, 2] = -1.0
             self.mask = nn.Parameter(data=self.mask, requires_grad=False)
         elif self.type == 'conv1x1-sobely':
-            conv0 = conv_bn(self.in_channels, self.out_channels, kernel_size=1, padding=0)
-            self.k0, self.b0 = conv0.weight_gen(), None
-            self.nonlinear, self.bn =  conv0.nonlinear, conv0.bn
-            self.rep_k0, self.rep_b0 = conv0.get_equivalent_kernel_bias()
+            self.conv0 = conv_bn(self.in_channels, self.out_channels, kernel_size=1, padding=0)
 
             scale = torch.randn(size=(self.out_channels, 1, 1, 1)) * 1e-3
             self.scale = nn.Parameter(scale)
@@ -75,10 +69,7 @@ class SeqConv(nn.Module):
             self.mask = nn.Parameter(data=self.mask, requires_grad=False)
 
         elif self.type == 'conv1x1-laplacian':
-            conv0 = conv_bn(self.in_channels, self.out_channels, kernel_size=1, padding=0)
-            self.k0, self.b0 = conv0.weight_gen(), None
-            self.nonlinear, self.bn =  conv0.nonlinear, conv0.bn
-            self.rep_k0, self.rep_b0 = conv0.get_equivalent_kernel_bias()
+            self.conv0 = conv_bn(self.in_channels, self.out_channels, kernel_size=1, padding=0)
 
             scale = torch.randn(size=(self.out_channels, 1, 1, 1)) * 1e-3
             self.scale = nn.Parameter(scale)
@@ -99,20 +90,22 @@ class SeqConv(nn.Module):
             raise ValueError('the type of seqconv is not supported!')
 
     def forward(self, x):
-        y0 = F.conv2d(input=x, weight=self.k0, bias=self.b0, stride=1)
+        y0 = self.conv0(x)
+        device = y0.get_device()
         y0 = F.pad(y0, (1, 1, 1, 1), 'constant', 0)
-        b0_pad = self.b0.view(1, -1, 1, 1)
+        # pad with zero vector
+        b0_pad = self.b0.view(1, -1, 1, 1).to(device)
         y0[:, :, 0:1, :] = b0_pad
         y0[:, :, -1:, :] = b0_pad
         y0[:, :, :, 0:1] = b0_pad
         y0[:, :, :, -1:] = b0_pad
-        y1 = self.nonlinear(self.bn(y0))
 
-        y1 = F.conv2d(input=y1, weight=self.scale * self.mask, bias=self.bias, stride=1, groups=self.out_channels)
+        y1 = F.conv2d(input=y0, weight=self.scale * self.mask, bias=self.bias, stride=1, groups=self.out_channels)
         return y1
 
     def rep_params(self):
-        device = self.rep_k0.get_device()
+        self.k0, self.b0 = self.conv0.get_equivalent_kernel_bias()
+        device = self.k0.get_device()
         if device < 0:
             device = None
 
@@ -121,8 +114,8 @@ class SeqConv(nn.Module):
         for i in range(self.out_channels):
             k1[i, i, :, :] = tmp[i, 0, :, :]
         b1 = self.bias
-        RK = F.conv2d(input=k1, weight=self.rep_k0.permute(1, 0, 2, 3))
-        RB = torch.ones(1, self.out_channels, 3, 3, device=device) * self.rep_b0.view(1, -1, 1, 1)
+        RK = F.conv2d(input=k1, weight=self.k0.permute(1, 0, 2, 3))
+        RB = torch.ones(1, self.out_channels, 3, 3, device=device) * self.b0.view(1, -1, 1, 1)
         RB = F.conv2d(input=RB, weight=k1).view(-1,) + b1
         return RK, RB
 
