@@ -21,6 +21,111 @@ class OREPA_1x1_3x3(nn.Module):
         out = self.conv2(out)
         return out
 
+class SeqConv(nn.Module):
+    def __init__(self, seq_type, in_planes, out_planes, depth_multiplier):
+        super(SeqConv, self).__init__()
+
+        self.type = seq_type
+        self.in_channels = in_planes
+        self.out_channels = out_planes
+
+        if self.type == 'conv1x1-sobelx':
+            conv0 = conv_bn(self.in_channels, self.out_channels, kernel_size=1, padding=0)
+            self.k0, self.b0 = conv0.weight_gen(), None
+            self.nonlinear, self.bn =  conv0.nonlinear, conv0.bn
+            self.rep_k0, self.rep_b0 = conv0.get_equivalent_kernel_bias()
+
+            scale = torch.randn(size=(self.out_channels, 1, 1, 1)) * 1e-3
+            self.scale = nn.Parameter(scale)
+
+            bias = torch.randn(self.out_channels) * 1e-3
+            bias = torch.reshape(bias, (self.out_channels, ))
+            self.bias = nn.Parameter(bias)
+
+            self.mask = torch.zeros((self.out_channels, 1, 3, 3), dtype=torch.float32)
+            for i in range(self.out_channels):
+                self.mask[i, 0, 0, 0] = 1.0
+                self.mask[i, 0, 1, 0] = 2.0
+                self.mask[i, 0, 2, 0] = 1.0
+                self.mask[i, 0, 0, 2] = -1.0
+                self.mask[i, 0, 1, 2] = -2.0
+                self.mask[i, 0, 2, 2] = -1.0
+            self.mask = nn.Parameter(data=self.mask, requires_grad=False)
+        elif self.type == 'conv1x1-sobely':
+            conv0 = conv_bn(self.in_channels, self.out_channels, kernel_size=1, padding=0)
+            self.k0, self.b0 = conv0.weight_gen(), None
+            self.nonlinear, self.bn =  conv0.nonlinear, conv0.bn
+            self.rep_k0, self.rep_b0 = conv0.get_equivalent_kernel_bias()
+
+            scale = torch.randn(size=(self.out_channels, 1, 1, 1)) * 1e-3
+            self.scale = nn.Parameter(scale)
+
+            bias = torch.randn(self.out_channels) * 1e-3
+            bias = torch.reshape(bias, (self.out_channels,))
+            self.bias = nn.Parameter(bias)
+
+            self.mask = torch.zeros((self.out_channels, 1, 3, 3), dtype=torch.float32)
+            for i in range(self.out_channels):
+                self.mask[i, 0, 0, 0] = 1.0
+                self.mask[i, 0, 0, 1] = 2.0
+                self.mask[i, 0, 0, 2] = 1.0
+                self.mask[i, 0, 2, 0] = -1.0
+                self.mask[i, 0, 2, 1] = -2.0
+                self.mask[i, 0, 2, 2] = -1.0
+            self.mask = nn.Parameter(data=self.mask, requires_grad=False)
+
+        elif self.type == 'conv1x1-laplacian':
+            conv0 = conv_bn(self.in_channels, self.out_channels, kernel_size=1, padding=0)
+            self.k0, self.b0 = conv0.weight_gen(), None
+            self.nonlinear, self.bn =  conv0.nonlinear, conv0.bn
+            self.rep_k0, self.rep_b0 = conv0.get_equivalent_kernel_bias()
+
+            scale = torch.randn(size=(self.out_channels, 1, 1, 1)) * 1e-3
+            self.scale = nn.Parameter(scale)
+
+            bias = torch.randn(self.out_channels) * 1e-3
+            bias = torch.reshape(bias, (self.out_channels,))
+            self.bias = nn.Parameter(bias)
+
+            self.mask = torch.zeros((self.out_channels, 1, 3, 3), dtype=torch.float32)
+            for i in range(self.out_channels):
+                self.mask[i, 0, 0, 1] = 1.0
+                self.mask[i, 0, 1, 0] = 1.0
+                self.mask[i, 0, 1, 2] = 1.0
+                self.mask[i, 0, 2, 1] = 1.0
+                self.mask[i, 0, 1, 1] = -4.0
+            self.mask = nn.Parameter(data=self.mask, requires_grad=False)
+        else:
+            raise ValueError('the type of seqconv is not supported!')
+
+    def forward(self, x):
+        y0 = F.conv2d(input=x, weight=self.k0, bias=self.b0, stride=1)
+        y0 = F.pad(y0, (1, 1, 1, 1), 'constant', 0)
+        b0_pad = self.b0.view(1, -1, 1, 1)
+        y0[:, :, 0:1, :] = b0_pad
+        y0[:, :, -1:, :] = b0_pad
+        y0[:, :, :, 0:1] = b0_pad
+        y0[:, :, :, -1:] = b0_pad
+        y1 = self.nonlinear(self.bn(y0))
+
+        y1 = F.conv2d(input=y1, weight=self.scale * self.mask, bias=self.bias, stride=1, groups=self.out_channels)
+        return y1
+
+    def rep_params(self):
+        device = self.rep_k0.get_device()
+        if device < 0:
+            device = None
+
+        tmp = self.scale * self.mask
+        k1 = torch.zeros((self.out_channels, self.out_channels, 3, 3), device=device)
+        for i in range(self.out_channels):
+            k1[i, i, :, :] = tmp[i, 0, :, :]
+        b1 = self.bias
+        RK = F.conv2d(input=k1, weight=self.rep_k0.permute(1, 0, 2, 3))
+        RB = torch.ones(1, self.out_channels, 3, 3, device=device) * self.rep_b0.view(1, -1, 1, 1)
+        RB = F.conv2d(input=RB, weight=k1).view(-1,) + b1
+        return RK, RB
+
 class OREPA_ECB(nn.Module):
     def __init__(self, in_planes, out_planes, depth_multiplier, act_type='prelu'):
         super(OREPA_ECB, self).__init__()
@@ -40,11 +145,12 @@ class OREPA_ECB(nn.Module):
             self.with_idt = False
 
         #   这里注意检测 orepa 当中的卷积是否进行了padding
-        self.conv3x3 = conv_bn(self.in_planes, self.out_planes, kernel_size=3, padding=1)
+        self.conv3x3_1 = conv_bn(self.in_planes, self.out_planes, kernel_size=3, padding=1)
         self.conv1x1_3x3 = OREPA_1x1_3x3('conv1x1_3x3', self.in_planes, self.out_planes, self.kernel_size, self.depth_multiplier)
-        self.conv1x1_sbx = SeqConv3x3('conv1x1-sobelx', self.in_planes, self.out_planes, -1)
-        self.conv1x1_sby = SeqConv3x3('conv1x1-sobely', self.in_planes, self.out_planes, -1)
-        self.conv1x1_lpl = SeqConv3x3('conv1x1-laplacian', self.in_planes, self.out_planes, -1)
+        self.conv1x1_sbx = SeqConv('conv1x1-sobelx', self.in_planes, self.out_planes, -1)
+        self.conv1x1_sby = SeqConv('conv1x1-sobely', self.in_planes, self.out_planes, -1)
+        self.conv1x1_lpl = SeqConv('conv1x1-laplacian', self.in_planes, self.out_planes, -1)
+        self.conv3x3_2 = conv_bn(self.in_planes, self.out_planes, kernel_size=3, padding=1)
 
         if self.act_type == 'prelu':
             self.act = nn.PReLU(num_parameters=self.out_planes)
@@ -61,7 +167,8 @@ class OREPA_ECB(nn.Module):
 
     def forward(self, x):
         if self.training:
-            y = self.conv3x3(x)     + \
+            y = self.conv3x3_1(x)   + \
+                self.conv3x3_2(x)   + \
                 self.conv1x1_3x3(x) + \
                 self.conv1x1_sbx(x) + \
                 self.conv1x1_sby(x) + \
@@ -84,7 +191,8 @@ class OREPA_ECB(nn.Module):
         device = K3.get_device()
         if device < 0:
             device = None
-        K0, B0 = self.conv3x3.switch_to_deploy()
+        K0, B0 = self.conv3x3_1.switch_to_deploy()
+        K5, B5 = self.conv3x3_2.switch_to_deploy()
         # K1_1, B1_1 = self.conv1x1_3x3.conv1.or1x1_reparam.weight, self.conv1x1_3x3.conv1.or1x1_reparam.bias
         # K1_3, B1_3 = self.conv1x1_3x3.conv2.orepa_reparam.weight, self.conv1x1_3x3.conv2.orepa_reparam.bias
         # reparam conv1x1_3x3
@@ -95,7 +203,7 @@ class OREPA_ECB(nn.Module):
         B1 = F.conv2d(input=B1, weight=k1_3).view(-1,) + b1_3
 
 
-        RK, RB = (K0 + K1+ K2 + K3 + K4), (B0 + B1 + B2 + B3 + B4)
+        RK, RB = (K0 + K1+ K2 + K3 + K4 + K5), (B0 + B1 + B2 + B3 + B4 + B5)
 
         if self.with_idt:
             device = RK.get_device()
